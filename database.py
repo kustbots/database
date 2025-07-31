@@ -8,7 +8,7 @@ URLS = []
 def index():
     return "🟢 Uptime Memory API is running."
 
-@app.route("/set", methods=["POST"])
+@app.route("/set", methods=["GET"])
 def add_url():
     data = request.get_json()
     url = data.get("url")
@@ -32,7 +32,7 @@ def get_url():
 def list_all():
     return jsonify(URLS)
 
-@app.route("/delete", methods=["DELETE"])
+@app.route("/delete", methods=["GET"])
 def delete_url():
     url = request.args.get("url")
     if not url:
@@ -43,7 +43,7 @@ def delete_url():
     except ValueError:
         return jsonify({"error": "URL not found"}), 404
 
-@app.route("/clear", methods=["DELETE"])
+@app.route("/clear", methods=["GET"])
 def clear_all():
     URLS.clear()
     return jsonify({"message": "All URLs cleared."})
