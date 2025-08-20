@@ -2,89 +2,117 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-URLS = []
-UPTIME_STATS = {} 
+# In-memory JSON-like database
+DB = {}
 
 @app.route("/")
 def index():
-    return "🟢 Uptime Memory API is running."
+    return "🟢 JSON Memory API running."
+
+# ---- Generic JSON storage ----
 
 @app.route("/set", methods=["POST"])
-def add_url():
+def set_data():
+    """
+    Body: { "key": "user123", "data": {"recent_songs": [...], "theme": "dark"} }
+    Creates or updates a record.
+    """
     data = request.get_json()
-    url = data.get("url")
-    if not url:
-        return jsonify({"error": "Missing 'url'"}), 400
-    if url not in URLS:
-        URLS.append(url)
-        return jsonify({"message": f"URL added: {url}"})
-    else:
-        return jsonify({"message": f"URL already exists: {url}"}), 200
+    key = data.get("key")
+    value = data.get("data")
+
+    if not key or value is None:
+        return jsonify({"error": "Missing 'key' or 'data'"}), 400
+
+    # Overwrite or create
+    DB[key] = value
+    return jsonify({"message": f"Data set for key '{key}'", "data": value})
 
 @app.route("/get", methods=["GET"])
-def get_url():
-    url = request.args.get("url")
-    if not url:
-        return jsonify({"error": "Missing 'url' param"}), 400
-    exists = url in URLS
-    return jsonify({"exists": exists, "url": url})
+def get_data():
+    """
+    Params: ?key=user123
+    """
+    key = request.args.get("key")
+    if not key:
+        return jsonify({"error": "Missing 'key' param"}), 400
+    value = DB.get(key)
+    if value is None:
+        return jsonify({"error": "No data for this key"}), 404
+    return jsonify({key: value})
+
+@app.route("/update", methods=["PATCH"])
+def update_data():
+    """
+    Body: { "key": "user123", "data": {"recent_songs": ["new_song"]} }
+    Merges data instead of replacing.
+    """
+    data = request.get_json()
+    key = data.get("key")
+    updates = data.get("data")
+
+    if not key or updates is None:
+        return jsonify({"error": "Missing 'key' or 'data'"}), 400
+    if key not in DB:
+        return jsonify({"error": "Key not found"}), 404
+
+    # Merge dictionaries
+    if isinstance(DB[key], dict) and isinstance(updates, dict):
+        DB[key].update(updates)
+    else:
+        DB[key] = updates  # if not dict, replace
+
+    return jsonify({"message": f"Data updated for key '{key}'", "data": DB[key]})
+
+@app.route("/delete", methods=["DELETE"])
+def delete_data():
+    """
+    Params: ?key=user123
+    """
+    key = request.args.get("key")
+    if not key:
+        return jsonify({"error": "Missing 'key' param"}), 400
+    if key not in DB:
+        return jsonify({"error": "Key not found"}), 404
+    del DB[key]
+    return jsonify({"message": f"Deleted key '{key}'"})
 
 @app.route("/all", methods=["GET"])
 def list_all():
-    return jsonify(URLS)
-
-@app.route("/delete", methods=["DELETE"])
-def delete_url():
-    url = request.args.get("url")
-    if not url:
-        return jsonify({"error": "Missing 'url' param"}), 400
-    try:
-        URLS.remove(url)
-        UPTIME_STATS.pop(url, None)
-        return jsonify({"message": f"Deleted: {url}"})
-    except ValueError:
-        return jsonify({"error": "URL not found"}), 404
+    return jsonify(DB)
 
 @app.route("/clear", methods=["DELETE"])
 def clear_all():
-    URLS.clear()
-    UPTIME_STATS.clear()
-    return jsonify({"message": "All URLs and stats cleared."})
+    DB.clear()
+    return jsonify({"message": "All data cleared."})
 
-@app.route("/uptime", methods=["POST", "GET"])
-def handle_uptime():
-    if request.method == "POST":
-        data = request.get_json()
-        url = data.get("url")
-        success = data.get("success")  # Boolean: True or False
+# ---- Extra: Append to list (for songs, history, etc.) ----
 
-        if not url or success is None:
-            return jsonify({"error": "Missing 'url' or 'success'"}), 400
+@app.route("/append", methods=["POST"])
+def append_data():
+    """
+    Body: { "key": "user123", "field": "recent_songs", "value": "songX" }
+    Appends value to a list field.
+    """
+    data = request.get_json()
+    key = data.get("key")
+    field = data.get("field")
+    value = data.get("value")
 
-        stats = UPTIME_STATS.get(url, {"total": 0, "success": 0})
-        stats["total"] += 1
-        if success:
-            stats["success"] += 1
-        UPTIME_STATS[url] = stats
+    if not key or not field or value is None:
+        return jsonify({"error": "Missing 'key', 'field' or 'value'"}), 400
+    if key not in DB:
+        DB[key] = {}
+    if field not in DB[key]:
+        DB[key][field] = []
+    if not isinstance(DB[key][field], list):
+        return jsonify({"error": f"Field '{field}' is not a list"}), 400
 
-        return jsonify({"message": "Uptime updated", "stats": stats})
-
-    elif request.method == "GET":
-        url = request.args.get("url")
-        if url:
-            stats = UPTIME_STATS.get(url)
-            if not stats:
-                return jsonify({"error": "No stats found for this URL"}), 404
-            uptime_percent = (stats["success"] / stats["total"] * 100) if stats["total"] else 0
-            return jsonify({url: {**stats, "uptime_percent": round(uptime_percent, 2)}})
-        else:
-            result = {}
-            for url, stats in UPTIME_STATS.items():
-                uptime_percent = (stats["success"] / stats["total"] * 100) if stats["total"] else 0
-                result[url] = {**stats, "uptime_percent": round(uptime_percent, 2)}
-            return jsonify(result)
+    DB[key][field].append(value)
+    return jsonify({"message": f"Value appended to '{field}' for key '{key}'", "data": DB[key]})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
 
 
